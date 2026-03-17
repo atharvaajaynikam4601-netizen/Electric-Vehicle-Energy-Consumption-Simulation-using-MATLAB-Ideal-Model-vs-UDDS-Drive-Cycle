@@ -1,4 +1,4 @@
-# High-Fidelity Longitudinal Dynamics Modeling and Energy Management of Electric Vehicles
+# Modelling and Simulation of Longitudinal Dynamics and Energy Management of Electric Vehicles using MATLAB
 
 ## 1. Project Overview
 This project presents a deterministic simulation framework for evaluating Electric Vehicle (EV) energy consumption and range estimation. The study bridges the gap between **idealized analytical models** and **high-fidelity simulations** by integrating non-linear motor efficiency maps, regenerative braking constraints, and standardized drive cycle validation (UDDS).

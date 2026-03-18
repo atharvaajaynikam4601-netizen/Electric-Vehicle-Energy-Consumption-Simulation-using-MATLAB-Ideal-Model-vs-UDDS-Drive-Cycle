@@ -29,8 +29,31 @@ The objective is to evaluate the energy demand of an 1800 kg EV by simulating re
 * **Energy Recovery Logic:** Regen braking capped at 120 Nm with a 1.5 m/s ($5.4$ km/h) low-speed cut-off to reflect back-EMF limitations.
 
 ### 1.4 Flowchart
-[Input: UDDS Velocity Trace] → [Derive: Acceleration & Tractive Forces] → [Check: Motor Torque-Speed Limits] → [Apply: Map-based Efficiency $\eta$] → [Integrate: Power Flow & SOC] → [Output: Performance Metrics]
-
+```text
+       Start
+         ↓
+Import UDDS Drive Cycle Data
+         ↓
+   Convert Speed Profile
+         ↓
+   Compute Acceleration
+         ↓
+Calculate Vehicle Forces
+         ↓
+  Compute Tractive Power
+         ↓
+ Calculate Battery Power
+         ↓
+Evaluate Regenerative Braking
+         ↓
+ Compute Energy Consumption
+         ↓
+Update Battery State of Charge
+         ↓
+Generate Plots & Performance Metrics
+         ↓
+        End
+```
 ---
 
 ## 2. Methodology

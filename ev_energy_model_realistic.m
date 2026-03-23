@@ -17,6 +17,12 @@ m_eq = m*(1 + delta);
 
 r_wheel = 0.3;            % Wheel radius (m)
 
+% BATTERY PARAMETERS
+
+Batt_capacity = 50;   % Battery capacity (kWh)
+
+SOC_init = 0.9;       % Initial SOC (90%)
+
 %% =================================================
 %% PART 2: IMPORT UDDS DRIVE CYCLE
 %% =================================================
@@ -51,7 +57,7 @@ F_rr   = m * g * Crr;
 F_aero = 0.5 * rho * Cd * A .* v.^2;
 F_acc  = m_eq .* a;
 
-theta = deg2rad(2);
+theta = deg2rad(0);
 F_rg = m*g*sin(theta);
 
 F_total = F_rr + F_aero + F_acc + F_rg;
@@ -166,15 +172,13 @@ for i = 1:length(P_mech)
 end
 
 %% =================================================
-%% PART 8: BATTERY POWER FLOW
+%% PART 8A: BATTERY POWER FLOW
 %% =================================================
 
 P_batt_disch_max = 90e3;
 P_batt_char_max  = 40e3;
 
 P_accessory = 900;
-
-Batt_capacity = 50; % kWh
 
 P_drive = zeros(size(P_mech));
 P_regen = zeros(size(P_mech));
@@ -200,18 +204,148 @@ end
 P_batt = P_drive - P_regen + P_accessory;
 
 %% =================================================
-%% PART 9: SOC MODEL
+%% PART 8B: BATTERY THERMAL PARAMETERS
 %% =================================================
+
+V_nom = 350;        % Nominal battery voltage (V)
+
+R_internal = 0.05;  % Internal resistance (Ohm)
+
+C_th = 45000;       % Thermal capacitance (J/K)
+
+R_th = 1.5;         % Thermal resistance (K/W)
+
+T_amb = 25;         % Ambient temperature (°C)
+
+
+% OCV-SOC MODEL
+SOC_curve = [0 0.1 0.2 0.4 0.6 0.8 1.0];
+
+OCV_curve = [300 320 335 350 365 380 400];   % voltage vs SOC % simple linear OCV model
+
+
+% BATTERY CURRENT
+I_batt = P_batt ./ V_nom;
+
+
+
+% HEAT GENERATION
+Q_heat = (I_batt.^2) * R_internal;
+
+
+
+% BATTERY TEMPERATURE INITIALIZATION
+T_batt = zeros(size(t));
+
+T_batt(1) = T_amb;
+
+
+% BATTERY ELECTRICAL MODEL
+V_oc = 360;   % Open circuit voltage (V)
+
+
+
+%% =================================================
+%% PART 9A: SOC MODEL
+%% =================================================
+
+V_batt = zeros(size(t));
+V_oc_vec = zeros(size(t));
 
 SOC = zeros(size(t));
 
-SOC(1) = 0.80;
+SOC(1) = SOC_init;
+
+% INITIAL BATTERY VOLTAGE
+V_oc_vec(1) = interp1(SOC_curve, OCV_curve, SOC_init,'linear','extrap');
+
+V_batt(1) = V_oc_vec(1) - I_batt(1) * R_internal;
+
 
 for i = 2:length(t)
 
+    % Energy consumed during timestep
     E_step_Wh = P_batt(i) * dt / 3600;
 
+    % SOC update
     SOC(i) = SOC(i-1) - E_step_Wh/(Batt_capacity*1000);
+
+    % Keep SOC physically valid
+    SOC(i) = max(0,min(1,SOC(i)));
+
+    % OCV from SOC lookup
+    V_oc_vec(i) = interp1(SOC_curve, OCV_curve, SOC(i),'linear','extrap');
+
+    % Heat generation
+    Q = Q_heat(i);
+
+    % Heat dissipation
+    Q_cooling = (T_batt(i-1) - T_amb) / R_th;
+
+    % Temperature change
+    dT = (Q - Q_cooling) / C_th;
+
+    % Temperature update
+    T_batt(i) = T_batt(i-1) + dT * dt;
+
+    % Battery terminal voltage
+    V_batt(i) = V_oc_vec(i) - I_batt(i) * R_internal;
+
+end
+
+
+% ENERGY CONSUMPTION
+
+Energy_used_Wh = sum(P_batt)*dt/3600;
+
+Energy_used_kWh = Energy_used_Wh/1000;
+
+
+%% =================================================
+%% PART 9B: KALMAN FILTER SOC ESTIMATOR
+%% =================================================
+
+% SENSOR NOISE MODEL
+noise = randn(size(V_batt))*0.5;
+
+V_meas = V_batt + noise;
+
+
+
+SOC_est = zeros(size(t));
+
+SOC_est(1) = SOC_init;
+
+P = 1e-4;   % estimation covariance
+
+Q = 1e-6;   % process noise
+
+R = 0.5;    % measurement noise
+
+for k = 2:length(t)
+
+    % SOC prediction (coulomb counting)
+    SOC_pred = SOC_est(k-1) - (I_batt(k)*dt)/(Batt_capacity*3600);
+
+    P = P + Q;
+
+    % Predicted OCV from SOC
+    V_oc_pred = interp1(SOC_curve, OCV_curve, SOC_pred,'linear','extrap');
+
+    % Measurement model sensitivity
+    H = 100;
+
+    % Kalman Gain
+    K = P*H/(H*P*H + R);
+
+    % Update step
+    SOC_est(k) = SOC_pred + K*(V_meas(k) - V_oc_pred);
+
+    % Physical SOC limits
+    SOC_est(k) = max(0,min(1,SOC_est(k)));
+
+    % Covariance update
+    P = (1-K*H)*P;
 
 end
 
@@ -221,14 +355,14 @@ end
 
 figure('Name','EV UDDS Simulation');
 
-subplot(3,1,1)
+subplot(4,1,1)
 plot(t,v*3.6,'r','LineWidth',1.5)
 xlabel('Time (s)')
 ylabel('Speed (km/h)')
 title('UDDS Drive Cycle')
 grid on
 
-subplot(3,1,2)
+subplot(4,1,2)
 plot(t,P_drive/1000,'b'); hold on
 plot(t,-P_regen/1000,'g')
 xlabel('Time (s)')
@@ -237,11 +371,34 @@ legend('Drive','Regen')
 title('Battery Power Flow')
 grid on
 
-subplot(3,1,3)
+subplot(4,1,3)
+plot(t,T_batt,'m','LineWidth',1.5)
+xlabel('Time (s)')
+ylabel('Temperature (°C)')
+title('Battery Temperature')
+grid on
+
+subplot(4,1,4)
 plot(t,SOC*100,'k','LineWidth',1.5)
 xlabel('Time (s)')
 ylabel('SOC (%)')
 title('Battery State of Charge')
+grid on
+
+% SOC ESTIMATION COMPARISON
+
+figure
+
+plot(t,SOC*100,'k','LineWidth',2); hold on
+plot(t,SOC_est*100,'r--','LineWidth',2)
+
+legend('True SOC','Estimated SOC')
+
+xlabel('Time (s)')
+ylabel('SOC (%)')
+
+title('Kalman Filter SOC Estimation')
+
 grid on
 
 %% =================================================
@@ -409,3 +566,118 @@ fprintf('\nESTIMATED EV RANGE\n\n');
 fprintf('Estimated Range (UDDS Based) : %.1f km\n',range_est);
 
 
+%% =================================================
+%% BATTERY ELECTRICAL ANALYSIS
+%% =================================================
+
+V_batt_avg = mean(V_batt);
+
+V_batt_max = max(V_batt);
+
+V_batt_min = min(V_batt);
+
+I_batt_max = max(abs(I_batt));
+
+fprintf('\nBATTERY ELECTRICAL PERFORMANCE\n\n');
+
+fprintf('Average Battery Voltage : %.2f V\n',V_batt_avg);
+
+fprintf('Maximum Battery Voltage : %.2f V\n',V_batt_max);
+
+fprintf('Minimum Battery Voltage : %.2f V\n',V_batt_min);
+
+fprintf('Maximum Battery Current : %.2f A\n',I_batt_max);
+
+
+
+%% =================================================
+%% SOC ESTIMATION PERFORMANCE USING KALMAN FILTER
+%% =================================================
+
+SOC_error = SOC - SOC_est;
+
+RMSE = sqrt(mean(SOC_error.^2))*100;
+
+max_error = max(abs(SOC_error))*100;
+
+fprintf('\nSOC ESTIMATION PERFORMANCE\n\n');
+
+fprintf('Kalman Filter RMSE : %.3f %%\n',RMSE);
+
+fprintf('Maximum SOC Estimation Error : %.3f %%\n',max_error);
+
+
+%% =================================================
+%% BATTERY THERMAL ANALYSIS
+%% =================================================
+
+T_max = max(T_batt);
+
+T_min = min(T_batt);
+
+T_rise = T_max - T_amb;
+
+fprintf('\nBATTERY THERMAL PERFORMANCE\n\n');
+
+fprintf('Maximum Battery Temperature : %.2f °C\n',T_max);
+
+fprintf('Minimum Battery Temperature : %.2f °C\n',T_min);
+
+fprintf('Temperature Rise : %.2f °C\n',T_rise);
+
+
+%% =================================================
+%% BATTERY ELECTRICAL VISUALIZATION
+%% =================================================
+
+figure('Name','Battery Electrical Behaviour')
+
+subplot(2,1,1)
+
+plot(t,V_batt,'b','LineWidth',1.5)
+
+xlabel('Time (s)')
+ylabel('Voltage (V)')
+title('Battery Terminal Voltage')
+
+grid on
+
+
+subplot(2,1,2)
+
+plot(t,I_batt,'r','LineWidth',1.5)
+
+xlabel('Time (s)')
+ylabel('Current (A)')
+title('Battery Current')
+
+grid on
+
+% Thermal Visualization Improvement
+
+figure
+
+plot(t,T_batt,'LineWidth',2)
+
+yline(40,'r--','Thermal Limit')
+
+xlabel('Time (s)')
+ylabel('Battery Temperature (°C)')
+
+title('Battery Thermal Safety Monitoring')
+
+grid on
+
+figure
+
+plot(t,V_oc_vec,'k','LineWidth',2); hold on
+plot(t,V_batt,'r','LineWidth',1.5)
+
+legend('Open Circuit Voltage','Terminal Voltage')
+
+xlabel('Time (s)')
+ylabel('Voltage (V)')
+
+title('Battery Voltage Behaviour')
+
+grid on

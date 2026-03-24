@@ -1,4 +1,4 @@
-# EV Powertrain Dynamics using UDDS Drive Cycle, Battery Electrical & Thermal Analysis using Kalman Filter
+# EV Powertrain Dynamics, Battery Electrical-Thermal Modeling, and SOC Estimation using Kalman Filter under the UDDS Drive Cycle in MATLAB
 
 ## Abstract
 
